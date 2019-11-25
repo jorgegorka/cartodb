@@ -144,6 +144,115 @@ describe SignupController do
       get signup_url(invitation_token: invitation.token('wadus@wad.us'), email: 'wadus@wad.us')
       response.status.should == 200
     end
+
+    context 'an invited user' do
+      let(:fake_organization) { FactoryGirl.create(:organization_with_users, whitelisted_email_domains: []) }
+      let(:owner) { Carto::User.find(fake_organization.owner.id) }
+      let(:email) { 'new_user_invited@carto.com' }
+      let(:whitelisted_email_domains) { ['carto.com'] }
+      let!(:invitation) { Carto::Invitation.create_new(owner, [email], 'Welcome!', true) }
+      let(:invitation_token) { invitation.token(email) }
+
+      before do
+        fake_organization.default_quota_in_bytes = DEFAULT_QUOTA_IN_BYTES
+        fake_organization.whitelisted_email_domains = whitelisted_email_domains
+        fake_organization.auth_username_password_enabled = true
+        fake_organization.seats = 99
+        fake_organization.seats = 99
+        fake_organization.viewer_seats = 99
+        fake_organization.save
+        host! "#{fake_organization.name}.localhost.lan"
+      end
+
+      context 'signup' do
+        let(:whitelisted_email_domains) { [] }
+
+        context 'when invitation is valid' do
+          before do
+            get signup_url(invitation_token: invitation_token, email: email)
+          end
+
+          it { expect(response.status).to eql 200 }
+        end
+
+        context 'when there is more than one invitation token' do
+          let!(:invitation2) { Carto::Invitation.create_new(owner, [email], 'Welcome!', true) }
+          let(:invitation_token) { invitation2.token(email) }
+
+          before do
+            get signup_url(invitation_token: invitation_token, email: email)
+          end
+
+          it { expect(response.status).to eql 200 }
+        end
+
+        context 'when token is invalid' do
+          let(:invitation_token) { 'invalid' }
+
+          before do
+            get signup_url(invitation_token: invitation_token, email: email)
+          end
+
+          it { expect(response.status).to eql 404 }
+        end
+
+        context 'when token has been used' do
+          before do
+            invitation.use(email, invitation_token)
+            get signup_url(invitation_token: invitation_token, email: email)
+          end
+
+          it { expect(response.status).to eql 404 }
+        end
+      end
+     
+      context '#create' do
+        let(:email) { 'new_user_valid@carto.com' }
+        let(:username) { 'inviteduser' }
+        let(:password) { '2{Patrañas}' }
+  
+        before :each do
+          host! "#{fake_organization.name}.localhost.lan"
+        end
+
+        context 'when invitation token is wrong' do
+          let(:email) { 'new_user_wrong@carto.com' }
+          let(:username) { 'inviteduser2' }
+          let(:invitation_token) { 'wrong' }
+
+	  before do 
+            post signup_organization_user_url(user_domain: fake_organization.name, user: { username: username, email: email, password: password },  invitation_token: invitation_token)
+          end
+
+          it { expect(response.body).to include "Fake token" }
+        end
+
+        context 'when user has more than one invitation token' do
+          let(:email) { 'new_user_multiple@carto.com' }
+          let(:username) { 'multipleuser' }
+          let!(:invitation2) { Carto::Invitation.create_new(owner, [email], 'Welcome!', true) }
+          let!(:other_invitation) { Carto::Invitation.create_new(owner, [email], 'Welcome!', true) }
+          let(:invitation_token) { other_invitation.token(email) }
+
+	  context 'when invitation has been used' do
+	    before do 
+              other_invitation.use(email, invitation_token)
+              post signup_organization_user_url(user_domain: fake_organization.name, user: { username: username, email: email, password: password }, invitation_token: invitation_token)
+            end
+
+            it { expect(response.body).to include "Fake token" }
+          end
+
+	  context 'when invitation has not been used' do
+	    before do 
+              post signup_organization_user_url(user_domain: fake_organization.name, user: { username: username, email: email, password: password }, invitation_token: invitation_token)
+            end
+
+            it { expect(response.body).to_not include "Fake token" }
+          end
+        end
+      end
+    end
   end
 
   describe 'user creation' do
